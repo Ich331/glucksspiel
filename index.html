@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Gewinnspiel (Browser)</title>
+  <title>Gewinnspiel (nuka's lotto)</title>
   <style>
     :root{
       --bg:#0f1724; --card:#0b1220; --accent:#06b6d4; --muted:#94a3b8; --good:#16a34a; --bad:#ef4444; --player:#2563eb; --glass: rgba(255,255,255,0.03);
@@ -111,6 +111,10 @@
     const nextBtn = document.getElementById('nextBtn');
 
     let selecting = true; // player may select fields
+    let lastDrawn = []; // indices (0-based) the computer drew in the last round
+    let isMouseDown = false;
+    let autoAdvanceTimer = null; // timer for auto-advance after draw
+    const X_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><g stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4 4l16 16"></path><path d="M20 4L4 20"></path></g></svg>`;
 
     function initBoard(){
       board.length = 0;
@@ -129,7 +133,7 @@
         const mark = document.createElement('div'); mark.className='mark';
 
         if(cell.status === 'player'){
-          mark.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><g stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4 4l16 16"></path><path d="M20 4L4 20"></path></g></svg>`;
+          mark.innerHTML = X_SVG;
         } else if(cell.status === 'comp' || cell.status === 'comp-win'){
           mark.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="white" stroke-width="2"/></svg>`;
         } else {
@@ -137,22 +141,64 @@
         }
 
         el.appendChild(num); el.appendChild(mark);
+
+        // click to toggle single selection
         el.addEventListener('click', ()=> onCellClick(idx));
+
+        // mouse drag selection: while mouse is down, moving over cells selects them
+        el.addEventListener('mouseenter', (e)=>{
+          if(isMouseDown && selecting){ setCellToPlayer(idx); }
+        });
+
+        // touch-friendly: touchstart selects, touchmove tracks
+        el.addEventListener('touchstart', (e)=>{ if(!selecting) return; e.preventDefault(); setCellToPlayer(idx); });
+        el.addEventListener('touchmove', (e)=>{
+          if(!selecting) return; e.preventDefault(); const t = e.touches[0]; const target = document.elementFromPoint(t.clientX, t.clientY); if(target){ const cellEl = target.closest('.cell'); if(cellEl) setCellToPlayer(Number(cellEl.dataset.index)); }
+        }, {passive:false});
+
         boardEl.appendChild(el);
       });
+    }
+
+    function setCellToPlayer(idx){
+      const cell = board[idx];
+      if(!cell) return;
+      if(cell.status === 'free'){
+        const current = getPlayerCount();
+        const maxAllowed = getMaxSelectableFields();
+        if(current >= maxAllowed) return;
+        cell.status = 'player';
+        const el = boardEl.querySelector(`[data-index='${idx}']`);
+        if(el){ el.className = 'cell player'; const mark = el.querySelector('.mark'); if(mark) mark.innerHTML = X_SVG; }
+      }
     }
 
     function onCellClick(idx){
       if(!selecting){ showMessage('Runde läuft — warte bis der Computer gezogen hat.'); return; }
       const cell = board[idx];
-      if(cell.status === 'free') cell.status = 'player';
-      else if(cell.status === 'player') cell.status = 'free';
+      const maxAllowed = getMaxSelectableFields();
+      const current = getPlayerCount();
+      if(cell.status === 'free'){
+        if(current < maxAllowed) cell.status = 'player';
+      } else if(cell.status === 'player'){
+        cell.status = 'free';
+      }
       renderBoard();
     }
 
     function getPlayerCount(){ return board.filter(c => c.status === 'player').length; }
+    function getMaxSelectableFields(){ return Math.floor(coins / COST_PER_FIELD); }
     function showMessage(txt){ messageEl.textContent = txt; }
     function updateCoins(){ coinsEl.textContent = coins; }
+
+    function checkGameOver(){
+      if(coins <= 0){
+        showMessage('Verloren — Neues Spiel startet...');
+        setTimeout(()=>{
+          coins = START_COINS; updateCoins(); initBoard(); selecting = true; nextBtn.style.display = 'none';
+        }, 1200);
+      }
+    }
 
     confirmBtn.addEventListener('click', ()=>{
       if(!selecting){ showMessage('Warte bis die Runde vorbei ist.'); return; }
@@ -175,6 +221,8 @@
         if(cell.status === 'player'){ coins += 10; cell.status = 'comp-win'; cell.matched = true; }
         else if(cell.status === 'free'){ cell.status = 'comp'; }
       });
+      // store drawn indices so jackpotPruefen can check which exact positions the computer chose
+      lastDrawn = drawnIndices.slice();
 
       updateCoins(); renderBoard();
 
@@ -186,10 +234,22 @@
 
       showMessage('Der Computer hat gezogen: ' + drawn.join(', '));
       jackpotPruefen();
+      checkGameOver();
 
       // Show the 'Weiter' button and wait for user to continue
       nextBtn.style.display = 'inline-block';
       nextBtn.disabled = false;
+
+      // Auto-advance after 3 seconds, but cancel if user clicks board or 'Weiter'
+      autoAdvanceTimer = setTimeout(()=>{
+        nextBtn.click();
+      }, 3000);
+
+      // Cancel auto-advance if user clicks on the board
+      boardEl.addEventListener('click', function cancelAutoAdvance(){
+        clearTimeout(autoAdvanceTimer);
+        boardEl.removeEventListener('click', cancelAutoAdvance);
+      }, {once: true});
     });
 
     clearBtn.addEventListener('click', ()=>{
@@ -202,6 +262,7 @@
 
     // Continue to next round: hide button, reset board and allow selection
     nextBtn.addEventListener('click', ()=>{
+      clearTimeout(autoAdvanceTimer);
       nextBtn.style.display = 'none';
       initBoard(); selecting = true; showMessage('Neue Runde: Wähle Felder und bestätige.');
     });
@@ -209,31 +270,79 @@
     function sample(arr, k){ const copy = arr.slice(); const out = []; for(let i=0;i<k && copy.length;i++){ const j = Math.floor(Math.random()*copy.length); out.push(copy.splice(j,1)[0]); } return out; }
 
     function jackpotPruefen(){
-      const lines = [
-        [0,1,2,3,4],[5,6,7,8,9],[10,11,12,13,14],[15,16,17,18,19],[20,21,22,23,24],
-        [0,5,10,15,20],[1,6,11,16,21],[2,7,12,17,22],[3,8,13,18,23],[4,9,14,19,24],
-        [0,6,12,18,24],[4,8,12,16,20]
-      ];
+      // Build all lines of interest dynamically: all full rows, full cols,
+      // and all diagonals (both directions) with length >= 4.
+      const lines = [];
 
-      function is_computer(cell){ return cell && (cell.status === 'comp' || cell.status === 'comp-win'); }
-      function is_player(cell){ return cell && (cell.status === 'player'); }
+      // rows
+      for(let r=0;r<5;r++){
+        const row = [];
+        for(let c=0;c<5;c++) row.push(r*5 + c);
+        lines.push(row);
+      }
+
+      // cols
+      for(let c=0;c<5;c++){
+        const col = [];
+        for(let r=0;r<5;r++) col.push(r*5 + c);
+        lines.push(col);
+      }
+
+      // diagonals NW->SE (dr=1,dc=1) and NE->SW (dr=1,dc=-1)
+      function collectDiagonals(dr, dc){
+        const starts = [];
+        // start positions: top row and left/right column
+        for(let c=0;c<5;c++) starts.push([0,c]);
+        for(let r=1;r<5;r++) starts.push([r, dc===1 ? 0 : 4]);
+
+        starts.forEach(([sr,sc])=>{
+          const diag = [];
+          let r = sr, c = sc;
+          while(r>=0 && r<5 && c>=0 && c<5){ diag.push(r*5 + c); r += dr; c += dc; }
+          if(diag.length >= 4) lines.push(diag);
+        });
+      }
+
+      collectDiagonals(1,1);  // NW->SE
+      collectDiagonals(1,-1); // NE->SW
+
+      // Treat both 'player' and 'comp-win' as player-picked cells
+      function is_player(cell){ return cell && (cell.status === 'player' || cell.status === 'comp-win'); }
 
       const usedPlayerIndices = new Set();
       const payoutTable = {4:40,5:100};
 
+      const lastDrawnSet = new Set(lastDrawn || []);
+
+      // For each line (which may be length 4 or 5) check how many of its positions the computer drew
       lines.forEach(line => {
-        const comp_count = line.reduce((s,i)=> s + (is_computer(board[i])?1:0), 0);
-        const playerIndices = line.filter(i => is_player(board[i]) && !usedPlayerIndices.has(i));
-        const player_in_line = playerIndices.length;
-        if(player_in_line > 0 && payoutTable[comp_count]){
-          const multiplier = payoutTable[comp_count];
-          const gain = multiplier * player_in_line;
-          coins += gain; updateCoins();
-          const label = comp_count === 5 ? 'Super Jackpot' : (comp_count === 4 ? 'Jackpot' : `Jackpot (${comp_count} O)`);
-          showMessage((messageEl.textContent || '') + `\n${label}! Du hast ${gain} coins gewonnen!`);
-          playerIndices.forEach(i => usedPlayerIndices.add(i));
-          highlightLine(line);
+        const lineDrawn = line.filter(i => lastDrawnSet.has(i));
+        const comp_count = lineDrawn.length;
+        if(!payoutTable[comp_count]) return; // only care about 4 or 5
+
+        // If comp_count === 4, require those drawn positions to be contiguous within the line
+        if(comp_count === 4){
+          const positions = lineDrawn.map(i => line.indexOf(i)).sort((a,b)=>a-b);
+          let contiguous = true;
+          for(let j=1;j<positions.length;j++){
+            if(positions[j] !== positions[j-1] + 1){ contiguous = false; break; }
+          }
+          if(!contiguous) return;
         }
+
+        // Reward only player cells that are on the exact computer‑chosen fields
+        const playerIndicesInDrawn = lineDrawn.filter(i => is_player(board[i]) && !usedPlayerIndices.has(i));
+        const player_in_line = playerIndicesInDrawn.length;
+        if(player_in_line <= 0) return;
+
+        const multiplier = payoutTable[comp_count];
+        const gain = multiplier * player_in_line;
+        coins += gain; updateCoins();
+        const label = comp_count === 5 ? 'Super Jackpot' : 'Jackpot (4 zusammenhängend)';
+        showMessage((messageEl.textContent || '') + `\n${label}! Du hast ${gain} coins gewonnen!`);
+
+        playerIndicesInDrawn.forEach(i => usedPlayerIndices.add(i));
+        highlightLine(playerIndicesInDrawn);
       });
     }
 
@@ -241,6 +350,30 @@
       line.forEach(i => { const el = boardEl.querySelector(`[data-index='${i}']`); if(el) el.classList.add('highlight'); });
       setTimeout(()=>{ line.forEach(i => { const el = boardEl.querySelector(`[data-index='${i}']`); if(el) el.classList.remove('highlight'); }); }, 1600);
     }
+
+    // Dev helper: force a specific draw from the console for testing.
+    // Usage in browser console: `forceDraw([22,18,14,10])` (1-based numbers)
+    window.forceDraw = function(nums){
+      if(!Array.isArray(nums)) return;
+      const drawnIndices = nums.map(n => (n - 1)).filter(i => i >= 0 && i < 25);
+      lastDrawn = drawnIndices.slice();
+      drawnIndices.forEach(idx => {
+        const cell = board[idx];
+        if(!cell) return;
+        if(cell.status === 'player'){ coins += 10; cell.status = 'comp-win'; cell.matched = true; }
+        else if(cell.status === 'free'){ cell.status = 'comp'; }
+      });
+      updateCoins(); renderBoard();
+      drawnIndices.forEach(i => { const el = boardEl.querySelector(`[data-index='${i}']`); if(el){ el.classList.add('animate-pop'); setTimeout(()=>el.classList.remove('animate-pop'), 420); } });
+      showMessage('Dev forced draw: ' + nums.join(', '));
+      jackpotPruefen();
+      nextBtn.style.display = 'inline-block';
+    };
+
+    // Mouse drag handling: set isMouseDown while pressing on board
+    boardEl.addEventListener('mousedown', (e)=>{ if(!selecting) return; isMouseDown = true; e.preventDefault(); });
+    window.addEventListener('mouseup', ()=>{ isMouseDown = false; });
+    boardEl.addEventListener('dragstart', (e)=> e.preventDefault());
 
     // init
     initBoard(); updateCoins();
