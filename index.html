@@ -35,6 +35,19 @@
     .btn{Padding:8px 12px;border-radius:8px;border:none;background:#0ea5a3;color:#012;cursor:pointer;font-weight:700}
     .small{font-size:13px;color:var(--muted)}
 
+    /* Settings Modal */
+    .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center}
+    .modal.open{display:flex}
+    .modal-content{background:var(--card);border-radius:10px;padding:18px;max-width:420px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.04)}
+    .modal-content h2{margin:0 0 12px 0;font-size:18px}
+    .modal-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.02)}
+    .modal-row:last-child{border-bottom:0}
+    .modal-left{display:flex;flex-direction:column}
+    .modal-controls{display:flex;gap:8px;align-items:center}
+    .modal .small{color:var(--muted);margin-top:6px}
+    .modal-buttons{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
+    .modal .btn{padding:8px 12px;border-radius:8px}
+
     /* Icons & animations */
     .mark svg{width:42px;height:42px;display:block}
     .cell.animate-pop{animation:pop .26s ease forwards}
@@ -73,6 +86,7 @@
       <button id="confirmSelection">Bestätigen & Ziehen</button>
       <button id="clearSelection" class="secondary">Auswahl löschen</button>
       <button id="resetBtn" class="secondary">Neustart</button>
+      <button id="settingsBtn" class="secondary">⚙ Einstellungen</button>
       <button id="nextBtn" class="secondary" style="display:none">Weiter</button>
     </div>
 
@@ -85,6 +99,58 @@
     </div>
 
     <div class="msg" id="message">Spiel startet mit 50 coins.</div>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal" aria-hidden="true">
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <h2 id="settingsTitle">Einstellungen</h2>
+
+        <div class="modal-row">
+          <div class="modal-left">
+            <strong>Auto-Weiter</strong>
+            <div class="small">Automatisch zur nächsten Runde springen, ohne auf "Weiter" zu klicken.</div>
+          </div>
+          <div class="modal-controls">
+            <input type="checkbox" id="autoAdvanceToggle" />
+          </div>
+        </div>
+
+        <div class="modal-row" id="autoAdvanceTimeDiv">
+          <div class="modal-left">
+            <div class="small">Wartezeit bis Auto-Weiter</div>
+          </div>
+          <div style="width:160px;display:flex;flex-direction:column;align-items:flex-end;">
+            <div style="font-size:13px;color:var(--muted)" id="autoAdvanceTimeDisplay">3 s</div>
+            <input type="range" id="autoAdvanceTime" min="1" max="10" value="3" step="1" />
+          </div>
+        </div>
+
+        <div class="modal-row">
+          <div class="modal-left">
+            <strong>Auto-Bestätigung</strong>
+            <div class="small">Wählt automatisch "Bestätigen", wenn du nach Auswahl inaktiv bist.</div>
+          </div>
+          <div class="modal-controls">
+            <input type="checkbox" id="autoConfirmToggle" />
+          </div>
+        </div>
+
+        <div class="modal-row" id="autoConfirmTimeDiv">
+          <div class="modal-left">
+            <div class="small">Wartezeit bis Auto-Bestätigung</div>
+          </div>
+          <div style="width:160px;display:flex;flex-direction:column;align-items:flex-end;">
+            <div style="font-size:13px;color:var(--muted)" id="autoConfirmTimeDisplay">5 s</div>
+            <input type="range" id="autoConfirmTime" min="2" max="10" value="5" step="1" />
+          </div>
+        </div>
+
+        <div class="modal-buttons">
+          <button id="settingsReset" class="btn secondary">Zurücksetzen</button>
+          <button id="settingsClose" class="btn">Schließen</button>
+        </div>
+      </div>
+    </div>
 
     <footer>
       <div class="small">Treffer: +10 coins pro getroffenes Feld</div>
@@ -114,7 +180,62 @@
     let lastDrawn = []; // indices (0-based) the computer drew in the last round
     let isMouseDown = false;
     let autoAdvanceTimer = null; // timer for auto-advance after draw
+    // Settings-controlled timers & flags
+    let autoAdvanceEnabled = true; // default: auto-advance active
+    let autoAdvanceDuration = 3; // seconds default
+    let autoConfirmEnabled = false; // default: auto-confirm off
+    let autoConfirmDuration = 5; // seconds default
+    let autoConfirmTimer = null;
     const X_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><g stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4 4l16 16"></path><path d="M20 4L4 20"></path></g></svg>`;
+
+    // Settings DOM bindings
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsModal = document.getElementById('settingsModal');
+    const settingsClose = document.getElementById('settingsClose');
+    const settingsReset = document.getElementById('settingsReset');
+
+    const autoAdvanceToggle = document.getElementById('autoAdvanceToggle');
+    const autoAdvanceTime = document.getElementById('autoAdvanceTime');
+    const autoAdvanceTimeDiv = document.getElementById('autoAdvanceTimeDiv');
+    const autoAdvanceTimeDisplay = document.getElementById('autoAdvanceTimeDisplay');
+
+    const autoConfirmToggle = document.getElementById('autoConfirmToggle');
+    const autoConfirmTime = document.getElementById('autoConfirmTime');
+    const autoConfirmTimeDiv = document.getElementById('autoConfirmTimeDiv');
+    const autoConfirmTimeDisplay = document.getElementById('autoConfirmTimeDisplay');
+
+    // initialize settings UI
+    if(autoAdvanceToggle){ autoAdvanceToggle.checked = !!autoAdvanceEnabled; autoAdvanceTime.value = autoAdvanceDuration; autoAdvanceTimeDisplay.textContent = autoAdvanceDuration + ' s'; autoAdvanceTimeDiv.style.display = autoAdvanceEnabled ? 'flex' : 'none'; }
+    if(autoConfirmToggle){ autoConfirmToggle.checked = !!autoConfirmEnabled; autoConfirmTime.value = autoConfirmDuration; autoConfirmTimeDisplay.textContent = autoConfirmDuration + ' s'; autoConfirmTimeDiv.style.display = autoConfirmEnabled ? 'flex' : 'none'; }
+
+    // settings behaviors
+    if(settingsBtn) settingsBtn.addEventListener('click', ()=>{ settingsModal.classList.add('open'); settingsModal.setAttribute('aria-hidden','false'); });
+    if(settingsClose) settingsClose.addEventListener('click', ()=>{ settingsModal.classList.remove('open'); settingsModal.setAttribute('aria-hidden','true'); });
+    if(settingsReset) settingsReset.addEventListener('click', ()=>{
+      // restore defaults
+      autoAdvanceEnabled = true; autoAdvanceDuration = 3; autoConfirmEnabled = false; autoConfirmDuration = 5;
+      if(autoAdvanceToggle) autoAdvanceToggle.checked = true; if(autoAdvanceTime) autoAdvanceTime.value = 3; if(autoAdvanceTimeDisplay) autoAdvanceTimeDisplay.textContent = '3 s'; if(autoAdvanceTimeDiv) autoAdvanceTimeDiv.style.display = 'flex';
+      if(autoConfirmToggle) autoConfirmToggle.checked = false; if(autoConfirmTime) autoConfirmTime.value = 5; if(autoConfirmTimeDisplay) autoConfirmTimeDisplay.textContent = '5 s'; if(autoConfirmTimeDiv) autoConfirmTimeDiv.style.display = 'none';
+      clearTimeout(autoConfirmTimer); autoConfirmTimer = null;
+    });
+
+    if(autoAdvanceToggle) autoAdvanceToggle.addEventListener('change', ()=>{ autoAdvanceEnabled = autoAdvanceToggle.checked; autoAdvanceTimeDiv.style.display = autoAdvanceEnabled ? 'flex' : 'none'; });
+    if(autoAdvanceTime) autoAdvanceTime.addEventListener('input', ()=>{ autoAdvanceDuration = Number(autoAdvanceTime.value); autoAdvanceTimeDisplay.textContent = autoAdvanceDuration + ' s'; });
+
+    if(autoConfirmToggle) autoConfirmToggle.addEventListener('change', ()=>{ autoConfirmEnabled = autoConfirmToggle.checked; autoConfirmTimeDiv.style.display = autoConfirmEnabled ? 'flex' : 'none'; if(!autoConfirmEnabled){ clearTimeout(autoConfirmTimer); autoConfirmTimer = null; } });
+    if(autoConfirmTime) autoConfirmTime.addEventListener('input', ()=>{ autoConfirmDuration = Number(autoConfirmTime.value); autoConfirmTimeDisplay.textContent = autoConfirmDuration + ' s'; });
+
+    // start/reset the auto-confirm timer when selection changes
+    function resetAutoConfirmTimer(){
+      clearTimeout(autoConfirmTimer);
+      if(!autoConfirmEnabled || !selecting) return;
+      if(getPlayerCount() === 0) return;
+      autoConfirmTimer = setTimeout(()=>{
+        if(selecting && getPlayerCount() > 0){
+          clearTimeout(autoConfirmTimer); autoConfirmTimer = null; confirmBtn.click();
+        }
+      }, autoConfirmDuration * 1000);
+    }
 
     function initBoard(){
       board.length = 0;
@@ -150,8 +271,8 @@
           if(isMouseDown && selecting){ setCellToPlayer(idx); }
         });
 
-        // touch-friendly: touchstart selects, touchmove tracks
-        el.addEventListener('touchstart', (e)=>{ if(!selecting) return; e.preventDefault(); setCellToPlayer(idx); });
+        // touch-friendly: tap toggles selection (allow deselect on mobile), touchmove selects while dragging
+        el.addEventListener('touchstart', (e)=>{ if(!selecting) return; e.preventDefault(); onCellClick(idx); });
         el.addEventListener('touchmove', (e)=>{
           if(!selecting) return; e.preventDefault(); const t = e.touches[0]; const target = document.elementFromPoint(t.clientX, t.clientY); if(target){ const cellEl = target.closest('.cell'); if(cellEl) setCellToPlayer(Number(cellEl.dataset.index)); }
         }, {passive:false});
@@ -170,6 +291,8 @@
         cell.status = 'player';
         const el = boardEl.querySelector(`[data-index='${idx}']`);
         if(el){ el.className = 'cell player'; const mark = el.querySelector('.mark'); if(mark) mark.innerHTML = X_SVG; }
+        // reset auto-confirm countdown on any selection change
+        resetAutoConfirmTimer();
       }
     }
 
@@ -184,6 +307,8 @@
         cell.status = 'free';
       }
       renderBoard();
+      // reset auto-confirm timer when user actively toggles a cell
+      resetAutoConfirmTimer();
     }
 
     function getPlayerCount(){ return board.filter(c => c.status === 'player').length; }
@@ -201,6 +326,8 @@
     }
 
     confirmBtn.addEventListener('click', ()=>{
+      // stop auto-confirm if active
+      clearTimeout(autoConfirmTimer); autoConfirmTimer = null;
       if(!selecting){ showMessage('Warte bis die Runde vorbei ist.'); return; }
       const selected = getPlayerCount();
       if(selected === 0){ showMessage('Wähle mindestens ein Feld bevor du bestätigst.'); return; }
@@ -240,20 +367,23 @@
       nextBtn.style.display = 'inline-block';
       nextBtn.disabled = false;
 
-      // Auto-advance after 3 seconds, but cancel if user clicks board or 'Weiter'
-      autoAdvanceTimer = setTimeout(()=>{
-        nextBtn.click();
-      }, 3000);
+      // Auto-advance after configured time (only if enabled). Cancel if user clicks board or 'Weiter'
+      if(autoAdvanceEnabled){
+        autoAdvanceTimer = setTimeout(()=>{ nextBtn.click(); }, autoAdvanceDuration * 1000);
 
-      // Cancel auto-advance if user clicks on the board
-      boardEl.addEventListener('click', function cancelAutoAdvance(){
-        clearTimeout(autoAdvanceTimer);
-        boardEl.removeEventListener('click', cancelAutoAdvance);
-      }, {once: true});
+        // Cancel auto-advance if user clicks on the board
+        boardEl.addEventListener('click', function cancelAutoAdvance(){
+          clearTimeout(autoAdvanceTimer);
+          boardEl.removeEventListener('click', cancelAutoAdvance);
+        }, {once: true});
+      } else {
+        autoAdvanceTimer = null;
+      }
     });
 
     clearBtn.addEventListener('click', ()=>{
       board.forEach(c => { if(c.status === 'player') c.status = 'free'; }); renderBoard(); showMessage('Auswahl gelöscht.');
+      clearTimeout(autoConfirmTimer); autoConfirmTimer = null;
     });
 
     resetBtn.addEventListener('click', ()=>{
@@ -371,7 +501,15 @@
     };
 
     // Mouse drag handling: set isMouseDown while pressing on board
-    boardEl.addEventListener('mousedown', (e)=>{ if(!selecting) return; isMouseDown = true; e.preventDefault(); });
+    // Also select the cell under the cursor immediately on mousedown
+    boardEl.addEventListener('mousedown', (e)=>{
+      if(!selecting) return;
+      // only react to left button presses
+      if(e.button !== undefined && e.button !== 0) return;
+      isMouseDown = true; e.preventDefault();
+      const cellEl = e.target.closest && e.target.closest('.cell');
+      if(cellEl){ const idx = Number(cellEl.dataset.index); if(!Number.isNaN(idx)) setCellToPlayer(idx); }
+    });
     window.addEventListener('mouseup', ()=>{ isMouseDown = false; });
     boardEl.addEventListener('dragstart', (e)=> e.preventDefault());
 
